@@ -3,18 +3,302 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>HITSTER ESC Player</title>
+<title>HITSTER ESC Spotify Player</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#111;color:white;display:grid;min-height:100vh;place-items:center}
+main{max-width:720px;padding:32px;text-align:center}
+button{font-size:18px;border:0;border-radius:999px;padding:14px 24px;background:#1DB954;color:#111;font-weight:800;cursor:pointer;margin:6px}
+button.secondary{background:#fff;color:#111}
+.status{margin:20px 0;font-size:18px;line-height:1.35}
+.small{opacity:.75;font-size:14px;line-height:1.5}
+#reader{width:100%;max-width:420px;margin:20px auto;display:none;border-radius:16px;overflow:hidden}
+</style>
 </head>
 <body>
+<main>
+<h1>HITSTER ESC Player</h1>
+<p class="status" id="status">Bereit.</p>
+
+<button id="loginBtn" hidden>Mit Spotify verbinden</button>
+<button id="scanBtn" class="secondary">Neues Lied scannen</button>
+<button id="clearBtn">Cache löschen</button>
+
+<div id="reader"></div>
+
+<p class="small">Scan → Spotify startet automatisch</p>
+</main>
+
 <script>
-// PATCH ONLY:
-// Alte Suche:
-// q = "JJ Wasted Love"
-//
-// Neue präzise Spotify-Suche:
-// q = 'track:"Wasted Love" artist:"JJ"'
-//
-// Dadurch werden falsche Treffer stark reduziert.
+const CLIENT_ID = "DEINE_SPOTIFY_CLIENT_ID_HIER";
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+const SCOPES = ["user-modify-playback-state","user-read-playback-state"].join(" ");
+
+const statusEl = document.getElementById("status");
+const loginBtn = document.getElementById("loginBtn");
+const clearBtn = document.getElementById("clearBtn");
+const scanBtn = document.getElementById("scanBtn");
+const readerEl = document.getElementById("reader");
+
+const params = new URLSearchParams(window.location.search);
+const rawTrack = params.get("track");
+const rawQuery = params.get("q");
+const code = params.get("code");
+
+let qrScanner = null;
+let isScanning = false;
+
+function setStatus(t){ statusEl.textContent = t; }
+
+clearBtn.onclick = () => {
+  ["pending_track","pending_query","spotify_access_token","spotify_token_expires_at","spotify_refresh_token","spotify_pkce_verifier"].forEach(k => localStorage.removeItem(k));
+  setStatus("Cache gelöscht.");
+};
+
+function isSpotifyTrackUri(value) {
+  return /^spotify:track:[A-Za-z0-9]{22}$/.test(value || "");
+}
+
+function queryFromAnyValue(value) {
+  if (!value) return "";
+  if (value.startsWith("spotify:search:")) return value.replace("spotify:search:", "").trim();
+  if (value.startsWith("spotify:track:")) return "";
+  return value.trim();
+}
+
+function parseScannedText(text) {
+  try {
+    const url = new URL(text);
+    const q = url.searchParams.get("q");
+    const track = url.searchParams.get("track");
+
+    if (track) {
+      if (isSpotifyTrackUri(track)) return { track, query: null };
+      return { track: null, query: queryFromAnyValue(track) };
+    }
+
+    if (q) return { track: null, query: q };
+  } catch (e) {}
+
+  if (isSpotifyTrackUri(text)) return { track: text, query: null };
+  return { track: null, query: queryFromAnyValue(text) };
+}
+
+async function startScanner() {
+  if (isScanning) return;
+
+  readerEl.style.display = "block";
+  setStatus("QR-Code scannen…");
+
+  qrScanner = new Html5Qrcode("reader");
+
+  try {
+    await qrScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      async decodedText => {
+        if (!isScanning) return;
+        isScanning = false;
+
+        try {
+          await qrScanner.stop();
+          readerEl.style.display = "none";
+
+          const parsed = parseScannedText(decodedText);
+
+          if (parsed.track) localStorage.setItem("pending_track", parsed.track);
+          if (parsed.query) localStorage.setItem("pending_query", parsed.query);
+
+          await handlePlayback(parsed.track, parsed.query);
+        } catch (err) {
+          console.error(err);
+          setStatus("Fehler beim Scannen.");
+        }
+      }
+    );
+
+    isScanning = true;
+  } catch (err) {
+    console.error(err);
+    readerEl.style.display = "none";
+    setStatus("Kamera konnte nicht geöffnet werden.");
+  }
+}
+
+scanBtn.onclick = startScanner;
+
+function base64urlencode(buf){
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+async function sha256(plain){
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(plain));
+}
+
+function randomString(len=64){
+  const c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const v=crypto.getRandomValues(new Uint8Array(len));
+  return [...v].map(x=>c[x%c.length]).join("");
+}
+
+async function login(){
+  const verifier = randomString();
+  localStorage.setItem("spotify_pkce_verifier", verifier);
+
+  const challenge = base64urlencode(await sha256(verifier));
+
+  const url = new URL("https://accounts.spotify.com/authorize");
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("scope", SCOPES);
+  url.searchParams.set("redirect_uri", REDIRECT_URI);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("code_challenge", challenge);
+
+  location.href = url.toString();
+}
+
+async function getTokenFromCode(authCode){
+  const body = new URLSearchParams();
+  body.set("client_id", CLIENT_ID);
+  body.set("grant_type", "authorization_code");
+  body.set("code", authCode);
+  body.set("redirect_uri", REDIRECT_URI);
+  body.set("code_verifier", localStorage.getItem("spotify_pkce_verifier") || "");
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+
+  const data = await res.json();
+
+  localStorage.setItem("spotify_access_token", data.access_token);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + data.expires_in * 1000));
+
+  if (data.refresh_token) localStorage.setItem("spotify_refresh_token", data.refresh_token);
+
+  return data.access_token;
+}
+
+async function getAccessToken(){
+  const token = localStorage.getItem("spotify_access_token");
+  const exp = Number(localStorage.getItem("spotify_token_expires_at") || 0);
+
+  if (token && Date.now() < exp - 60000) return token;
+
+  return null;
+}
+
+async function resolveTrack(accessToken, q){
+  setStatus("Suche Lied…");
+
+  let artist = "";
+  let track = q;
+
+  const parts = q.split(" ");
+  if (parts.length > 1) {
+    artist = parts[0];
+    track = parts.slice(1).join(" ");
+  }
+
+  const spotifyQuery = `track:"${track}" artist:"${artist}"`;
+
+  const url = new URL("https://api.spotify.com/v1/search");
+  url.searchParams.set("type", "track");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("q", spotifyQuery);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+
+  const data = await res.json();
+  const item = data.tracks?.items?.[0];
+
+  if (!item) throw new Error("Kein Spotify-Track gefunden.");
+
+  return item.uri;
+}
+
+async function playTrack(accessToken, trackUri){
+  setStatus("Starte Wiedergabe…");
+
+  const res = await fetch("https://api.spotify.com/v1/me/player/play", {
+    method:"PUT",
+    headers:{
+      Authorization:`Bearer ${accessToken}`,
+      "Content-Type":"application/json"
+    },
+    body: JSON.stringify({ uris:[trackUri] })
+  });
+
+  if (res.status === 204) {
+    setStatus("🎵");
+    return;
+  }
+
+  if (res.status === 404) {
+    setStatus("Kein aktives Spotify-Gerät gefunden.");
+    return;
+  }
+
+  if (res.status === 403) {
+    setStatus("Spotify Premium erforderlich.");
+    return;
+  }
+
+  throw new Error(await res.text());
+}
+
+async function handlePlayback(track, query) {
+  let token = await getAccessToken();
+
+  if (!token) {
+    setStatus("Mit Spotify verbinden.");
+    loginBtn.hidden = false;
+    loginBtn.onclick = login;
+    return;
+  }
+
+  if (!track && query) track = await resolveTrack(token, query);
+
+  if (!track) {
+    setStatus("Kein Lied gefunden.");
+    return;
+  }
+
+  await playTrack(token, track);
+}
+
+async function init(){
+  if (CLIENT_ID === "DEINE_SPOTIFY_CLIENT_ID_HIER") {
+    setStatus("Bitte CLIENT_ID eintragen.");
+    return;
+  }
+
+  let token = await getAccessToken();
+
+  if (code) {
+    token = await getTokenFromCode(code);
+    history.replaceState({}, document.title, REDIRECT_URI);
+  }
+
+  if (rawTrack || rawQuery) {
+    const parsed = parseScannedText(window.location.href);
+    await handlePlayback(parsed.track, parsed.query);
+  }
+}
+
+init().catch(e => {
+  console.error(e);
+  setStatus("Fehler.");
+});
 </script>
 </body>
 </html>
