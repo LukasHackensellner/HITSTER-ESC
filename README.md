@@ -1,18 +1,13 @@
-# HITSTER ESC App v3
+# HITSTER ESC App v4
 
-Fix für `invalid track uri`.
+Änderung:
+- Während der Spotify-Suche werden keine Songnamen oder Interpreten mehr angezeigt.
+- Nur generische Statusmeldungen wie:
+  - „Suche Lied…“
+  - „Starte Wiedergabe…“
+  - „🎵“
 
-Diese Version:
-- behandelt nur `spotify:track:<22 Zeichen>` als direkten Track
-- löst `?q=Artist Titel` zuerst über die Spotify Search API auf
-- konvertiert alte `spotify:search:`-Werte automatisch in Suchanfragen
-- nutzt den aktuellen QR-Code vor alten localStorage-Werten
-- enthält einen „Cache löschen“-Button
-
-## Deployment
-
-1. In `index.html` deine Spotify Client ID eintragen.
-2. Datei in dein GitHub-Pages-Repo `HITSTER-ESC` hochladen/ersetzen.
-3. Im Spotify Developer Dashboard muss als Redirect URI stehen:
-   `https://lukashackensellner.github.io/HITSTER-ESC/`
-4. Nach dem Upload auf dem Handy einmal die Seite öffnen und „Cache löschen“ klicken.
+Deployment:
+1. CLIENT_ID in index.html eintragen
+2. Datei auf GitHub Pages hochladen
+3. Cache löschen und erneut scannen
