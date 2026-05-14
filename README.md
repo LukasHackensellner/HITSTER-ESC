@@ -1,16 +1,18 @@
-# HITSTER ESC App v2
+# HITSTER ESC App v3
 
-Diese Version kann zwei QR-Code-Formate:
+Fix für `invalid track uri`.
 
-- `?track=spotify:track:TRACK_ID` für echte feste Track-IDs
-- `?q=Artist Titel` für automatische Spotify-API-Suche und sofortiges Abspielen des ersten Treffers
+Diese Version:
+- behandelt nur `spotify:track:<22 Zeichen>` als direkten Track
+- löst `?q=Artist Titel` zuerst über die Spotify Search API auf
+- konvertiert alte `spotify:search:`-Werte automatisch in Suchanfragen
+- nutzt den aktuellen QR-Code vor alten localStorage-Werten
+- enthält einen „Cache löschen“-Button
 
-Für dein vollständiges ESC-Deck sind die QR-Codes auf `?q=` gesetzt, damit keine falschen statischen Track-IDs verwendet werden.
+## Deployment
 
-## Einrichtung
-
-1. In `index.html` `DEINE_SPOTIFY_CLIENT_ID_HIER` ersetzen.
-2. In Spotify Developer Dashboard als Redirect URI eintragen:
+1. In `index.html` deine Spotify Client ID eintragen.
+2. Datei in dein GitHub-Pages-Repo `HITSTER-ESC` hochladen/ersetzen.
+3. Im Spotify Developer Dashboard muss als Redirect URI stehen:
    `https://lukashackensellner.github.io/HITSTER-ESC/`
-3. Datei in dein GitHub-Pages-Repo hochladen.
-4. Spotify Premium und ein aktives Spotify-Gerät sind erforderlich.
+4. Nach dem Upload auf dem Handy einmal die Seite öffnen und „Cache löschen“ klicken.

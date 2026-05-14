@@ -6,11 +6,11 @@
 <title>HITSTER ESC Spotify Player</title>
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#111;color:white;display:grid;min-height:100vh;place-items:center}
-main{max-width:620px;padding:32px;text-align:center}
-button{font-size:18px;border:0;border-radius:999px;padding:14px 24px;background:#1DB954;color:#111;font-weight:800;cursor:pointer}
+main{max-width:660px;padding:32px;text-align:center}
+button{font-size:18px;border:0;border-radius:999px;padding:14px 24px;background:#1DB954;color:#111;font-weight:800;cursor:pointer;margin:6px}
 code{background:#222;padding:2px 6px;border-radius:6px}
 .small{opacity:.75;font-size:14px;line-height:1.5}
-.status{margin:20px 0;font-size:18px}
+.status{margin:20px 0;font-size:18px;line-height:1.35}
 </style>
 </head>
 <body>
@@ -18,114 +18,241 @@ code{background:#222;padding:2px 6px;border-radius:6px}
 <h1>HITSTER ESC Player</h1>
 <p class="status" id="status">Bereit.</p>
 <button id="loginBtn" hidden>Mit Spotify verbinden</button>
+<button id="clearBtn">Cache löschen</button>
 <p class="small">
 QR-Formate:<br>
 <code>?track=spotify:track:TRACK_ID</code><br>
 <code>?q=Artist%20Titel</code>
 </p>
 </main>
+
 <script>
-const CLIENT_ID = "fa347d2153ab4389be371084945cdd99";
+const CLIENT_ID = "DEINE_SPOTIFY_CLIENT_ID_HIER";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 const SCOPES = ["user-modify-playback-state","user-read-playback-state"].join(" ");
-const statusEl=document.getElementById("status");
-const loginBtn=document.getElementById("loginBtn");
-const params=new URLSearchParams(window.location.search);
-const rawTrack=params.get("track");
-const rawQuery=params.get("q");
-const code=params.get("code");
-function setStatus(t){statusEl.textContent=t}
-function base64urlencode(buf){return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
-async function sha256(plain){return crypto.subtle.digest("SHA-256",new TextEncoder().encode(plain))}
-function randomString(len=64){const c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";const v=crypto.getRandomValues(new Uint8Array(len));return[...v].map(x=>c[x%c.length]).join("")}
+
+const statusEl = document.getElementById("status");
+const loginBtn = document.getElementById("loginBtn");
+const clearBtn = document.getElementById("clearBtn");
+
+const params = new URLSearchParams(window.location.search);
+const rawTrack = params.get("track");
+const rawQuery = params.get("q");
+const code = params.get("code");
+
+function setStatus(t){ statusEl.textContent = t; }
+
+clearBtn.onclick = () => {
+  ["pending_track","pending_query","spotify_access_token","spotify_token_expires_at","spotify_refresh_token","spotify_pkce_verifier"].forEach(k => localStorage.removeItem(k));
+  setStatus("Cache gelöscht. QR-Code erneut scannen.");
+};
+
+function isSpotifyTrackUri(value) {
+  return /^spotify:track:[A-Za-z0-9]{22}$/.test(value || "");
+}
+
+function queryFromAnyValue(value) {
+  if (!value) return "";
+  if (value.startsWith("spotify:search:")) return value.replace("spotify:search:", "").trim();
+  if (value.startsWith("spotify:track:")) return "";
+  return value.trim();
+}
+
+function base64urlencode(buf){
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+async function sha256(plain){ return crypto.subtle.digest("SHA-256", new TextEncoder().encode(plain)); }
+function randomString(len=64){
+  const c="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const v=crypto.getRandomValues(new Uint8Array(len));
+  return [...v].map(x=>c[x%c.length]).join("");
+}
+
 async function login(){
-  const verifier=randomString();
-  localStorage.setItem("spotify_pkce_verifier",verifier);
-  if(rawTrack)localStorage.setItem("pending_track",rawTrack);
-  if(rawQuery)localStorage.setItem("pending_query",rawQuery);
-  const challenge=base64urlencode(await sha256(verifier));
-  const url=new URL("https://accounts.spotify.com/authorize");
-  url.searchParams.set("response_type","code");
-  url.searchParams.set("client_id",CLIENT_ID);
-  url.searchParams.set("scope",SCOPES);
-  url.searchParams.set("redirect_uri",REDIRECT_URI);
-  url.searchParams.set("code_challenge_method","S256");
-  url.searchParams.set("code_challenge",challenge);
-  location.href=url.toString();
+  const verifier = randomString();
+  localStorage.setItem("spotify_pkce_verifier", verifier);
+
+  if (rawTrack) {
+    if (isSpotifyTrackUri(rawTrack)) localStorage.setItem("pending_track", rawTrack);
+    else localStorage.setItem("pending_query", queryFromAnyValue(rawTrack));
+  }
+  if (rawQuery) localStorage.setItem("pending_query", rawQuery);
+
+  const challenge = base64urlencode(await sha256(verifier));
+  const url = new URL("https://accounts.spotify.com/authorize");
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("scope", SCOPES);
+  url.searchParams.set("redirect_uri", REDIRECT_URI);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("code_challenge", challenge);
+  location.href = url.toString();
 }
+
 async function getTokenFromCode(authCode){
-  const body=new URLSearchParams();
-  body.set("client_id",CLIENT_ID);
-  body.set("grant_type","authorization_code");
-  body.set("code",authCode);
-  body.set("redirect_uri",REDIRECT_URI);
-  body.set("code_verifier",localStorage.getItem("spotify_pkce_verifier"));
-  const res=await fetch("https://accounts.spotify.com/api/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
-  if(!res.ok)throw new Error(await res.text());
-  const data=await res.json();
-  localStorage.setItem("spotify_access_token",data.access_token);
-  localStorage.setItem("spotify_token_expires_at",String(Date.now()+data.expires_in*1000));
-  if(data.refresh_token)localStorage.setItem("spotify_refresh_token",data.refresh_token);
+  const body = new URLSearchParams();
+  body.set("client_id", CLIENT_ID);
+  body.set("grant_type", "authorization_code");
+  body.set("code", authCode);
+  body.set("redirect_uri", REDIRECT_URI);
+  body.set("code_verifier", localStorage.getItem("spotify_pkce_verifier") || "");
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body
+  });
+  if (!res.ok) throw new Error(await res.text());
+
+  const data = await res.json();
+  localStorage.setItem("spotify_access_token", data.access_token);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + data.expires_in * 1000));
+  if (data.refresh_token) localStorage.setItem("spotify_refresh_token", data.refresh_token);
   return data.access_token;
 }
+
 async function getAccessToken(){
-  const token=localStorage.getItem("spotify_access_token");
-  const exp=Number(localStorage.getItem("spotify_token_expires_at")||0);
-  if(token&&Date.now()<exp-60000)return token;
-  const refresh=localStorage.getItem("spotify_refresh_token");
-  if(!refresh)return null;
-  const body=new URLSearchParams();
-  body.set("client_id",CLIENT_ID);
-  body.set("grant_type","refresh_token");
-  body.set("refresh_token",refresh);
-  const res=await fetch("https://accounts.spotify.com/api/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
-  if(!res.ok)return null;
-  const data=await res.json();
-  localStorage.setItem("spotify_access_token",data.access_token);
-  localStorage.setItem("spotify_token_expires_at",String(Date.now()+data.expires_in*1000));
-  if(data.refresh_token)localStorage.setItem("spotify_refresh_token",data.refresh_token);
+  const token = localStorage.getItem("spotify_access_token");
+  const exp = Number(localStorage.getItem("spotify_token_expires_at") || 0);
+  if (token && Date.now() < exp - 60000) return token;
+
+  const refresh = localStorage.getItem("spotify_refresh_token");
+  if (!refresh) return null;
+
+  const body = new URLSearchParams();
+  body.set("client_id", CLIENT_ID);
+  body.set("grant_type", "refresh_token");
+  body.set("refresh_token", refresh);
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body
+  });
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  localStorage.setItem("spotify_access_token", data.access_token);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + data.expires_in * 1000));
+  if (data.refresh_token) localStorage.setItem("spotify_refresh_token", data.refresh_token);
   return data.access_token;
 }
-async function resolveTrack(accessToken,q){
-  setStatus("Suche Track auf Spotify…");
-  const url=new URL("https://api.spotify.com/v1/search");
-  url.searchParams.set("type","track");
-  url.searchParams.set("limit","1");
-  url.searchParams.set("q",q);
-  const res=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
-  if(!res.ok)throw new Error(await res.text());
-  const data=await res.json();
-  const item=data.tracks?.items?.[0];
-  if(!item)throw new Error("Kein Spotify-Track gefunden: "+q);
-  setStatus("Gefunden: "+item.name+" – "+item.artists.map(a=>a.name).join(", "));
+
+async function resolveTrack(accessToken, q){
+  if (!q) throw new Error("Keine Suchanfrage vorhanden.");
+  setStatus("Suche auf Spotify: " + q);
+
+  const url = new URL("https://api.spotify.com/v1/search");
+  url.searchParams.set("type", "track");
+  url.searchParams.set("limit", "5");
+  url.searchParams.set("q", q);
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(await res.text());
+
+  const data = await res.json();
+  const item = data.tracks?.items?.[0];
+  if (!item) throw new Error("Kein Spotify-Track gefunden: " + q);
+
+  const found = item.name + " – " + item.artists.map(a=>a.name).join(", ");
+  setStatus("Gefunden: " + found);
   return item.uri;
 }
-async function playTrack(accessToken,trackUri){
+
+async function playTrack(accessToken, trackUri){
+  if (!isSpotifyTrackUri(trackUri)) {
+    throw new Error("Invalid track URI abgefangen: " + trackUri);
+  }
+
   setStatus("Starte Wiedergabe…");
-  const res=await fetch("https://api.spotify.com/v1/me/player/play",{method:"PUT",headers:{Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},body:JSON.stringify({uris:[trackUri]})});
-  if(res.status===204){setStatus("Lied gestartet 🎵");return}
-  if(res.status===404){setStatus("Kein aktives Spotify-Gerät gefunden. Öffne Spotify und scanne erneut.");return}
-  if(res.status===403){setStatus("Spotify Premium nötig oder Playback verweigert.");return}
+
+  const res = await fetch("https://api.spotify.com/v1/me/player/play", {
+    method:"PUT",
+    headers:{
+      Authorization:`Bearer ${accessToken}`,
+      "Content-Type":"application/json"
+    },
+    body: JSON.stringify({ uris:[trackUri] })
+  });
+
+  if (res.status === 204) {
+    setStatus("Lied gestartet 🎵");
+    return;
+  }
+  if (res.status === 404) {
+    setStatus("Kein aktives Spotify-Gerät gefunden. Öffne Spotify auf Handy/Computer und scanne erneut.");
+    return;
+  }
+  if (res.status === 403) {
+    setStatus("Spotify Premium nötig oder Playback wurde verweigert.");
+    return;
+  }
+
   throw new Error(await res.text());
 }
+
 async function init(){
-  if(CLIENT_ID==="DEINE_SPOTIFY_CLIENT_ID_HIER"){setStatus("Bitte CLIENT_ID in index.html eintragen.");return}
-  let token=await getAccessToken();
-  if(code){
-    token=await getTokenFromCode(code);
-    const pTrack=localStorage.getItem("pending_track");
-    const pQuery=localStorage.getItem("pending_query");
-    const qs=pTrack?("?track="+encodeURIComponent(pTrack)):(pQuery?("?q="+encodeURIComponent(pQuery)):"");
-    history.replaceState({},document.title,REDIRECT_URI+qs);
+  if (CLIENT_ID === "DEINE_SPOTIFY_CLIENT_ID_HIER") {
+    setStatus("Bitte zuerst CLIENT_ID in index.html eintragen.");
+    return;
   }
-  let track=rawTrack||localStorage.getItem("pending_track");
-  let query=rawQuery||localStorage.getItem("pending_query");
-  if(!track&&!query){setStatus("Kein Track/keine Suche im QR-Link gefunden.");return}
-  if(!token){setStatus("Einmal mit Spotify verbinden.");loginBtn.hidden=false;loginBtn.onclick=login;return}
-  if(!track)track=await resolveTrack(token,query);
-  await playTrack(token,track);
+
+  // Aktueller QR-Code hat immer Vorrang vor altem localStorage.
+  let track = null;
+  let query = null;
+
+  if (rawTrack) {
+    if (isSpotifyTrackUri(rawTrack)) track = rawTrack;
+    else query = queryFromAnyValue(rawTrack);
+  }
+  if (rawQuery) query = rawQuery;
+
+  let token = await getAccessToken();
+
+  if (code) {
+    token = await getTokenFromCode(code);
+    track = localStorage.getItem("pending_track");
+    query = localStorage.getItem("pending_query");
+
+    if (track && !isSpotifyTrackUri(track)) {
+      query = queryFromAnyValue(track);
+      track = null;
+    }
+
+    const qs = track ? ("?track=" + encodeURIComponent(track)) : (query ? ("?q=" + encodeURIComponent(query)) : "");
+    history.replaceState({}, document.title, REDIRECT_URI + qs);
+  }
+
+  if (!track && !query) {
+    // Nur als letzte Rückfalloption localStorage nutzen.
+    const storedTrack = localStorage.getItem("pending_track");
+    const storedQuery = localStorage.getItem("pending_query");
+    if (isSpotifyTrackUri(storedTrack)) track = storedTrack;
+    else query = storedQuery || queryFromAnyValue(storedTrack);
+  }
+
+  if (!track && !query) {
+    setStatus("Kein Track/keine Suche im QR-Code gefunden.");
+    return;
+  }
+
+  if (!token) {
+    setStatus("Einmal mit Spotify verbinden.");
+    loginBtn.hidden = false;
+    loginBtn.onclick = login;
+    return;
+  }
+
+  if (!track) track = await resolveTrack(token, query);
+  await playTrack(token, track);
 }
-init().catch(e=>{console.error(e);setStatus("Fehler: "+e.message);loginBtn.hidden=false;loginBtn.onclick=login});
+
+init().catch(e => {
+  console.error(e);
+  setStatus("Fehler: " + e.message);
+  loginBtn.hidden = false;
+  loginBtn.onclick = login;
+});
 </script>
 </body>
 </html>
