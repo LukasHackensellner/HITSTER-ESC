@@ -1,13 +1,18 @@
-# HITSTER ESC App v4
+# HITSTER ESC App v5
 
-Änderung:
-- Während der Spotify-Suche werden keine Songnamen oder Interpreten mehr angezeigt.
-- Nur generische Statusmeldungen wie:
-  - „Suche Lied…“
-  - „Starte Wiedergabe…“
-  - „🎵“
+Neu:
+- Button „Neues Lied scannen“
+- Öffnet die Kamera im Browser
+- Erkennt QR-Codes direkt in der App
+- Zeigt weiterhin keine Songnamen oder Interpreten an
+
+Wichtig:
+- Funktioniert nur über HTTPS, also z. B. GitHub Pages.
+- Auf iPhone/Android muss Kamerazugriff erlaubt werden.
+- Spotify Premium und ein aktives Spotify-Gerät sind weiterhin nötig.
 
 Deployment:
-1. CLIENT_ID in index.html eintragen
-2. Datei auf GitHub Pages hochladen
-3. Cache löschen und erneut scannen
+1. CLIENT_ID in index.html eintragen.
+2. index.html in deinem GitHub-Pages-Repo ersetzen.
+3. Seite am Handy neu laden.
+4. Bei Problemen Cache löschen.

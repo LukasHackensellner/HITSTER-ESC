@@ -4,36 +4,49 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>HITSTER ESC Spotify Player</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#111;color:white;display:grid;min-height:100vh;place-items:center}
-main{max-width:660px;padding:32px;text-align:center}
+main{max-width:720px;padding:32px;text-align:center}
 button{font-size:18px;border:0;border-radius:999px;padding:14px 24px;background:#1DB954;color:#111;font-weight:800;cursor:pointer;margin:6px}
+button.secondary{background:#fff;color:#111}
 .status{margin:20px 0;font-size:18px;line-height:1.35}
 .small{opacity:.75;font-size:14px;line-height:1.5}
+#reader{width:100%;max-width:420px;margin:20px auto;display:none;border-radius:16px;overflow:hidden}
 </style>
 </head>
 <body>
 <main>
 <h1>HITSTER ESC Player</h1>
 <p class="status" id="status">Bereit.</p>
+
 <button id="loginBtn" hidden>Mit Spotify verbinden</button>
+<button id="scanBtn" class="secondary">Neues Lied scannen</button>
 <button id="clearBtn">Cache löschen</button>
+
+<div id="reader"></div>
+
 <p class="small">Scan → Spotify startet automatisch</p>
 </main>
 
 <script>
-const CLIENT_ID = "fa347d2153ab4389be371084945cdd99";
+const CLIENT_ID = "DEINE_SPOTIFY_CLIENT_ID_HIER";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 const SCOPES = ["user-modify-playback-state","user-read-playback-state"].join(" ");
 
 const statusEl = document.getElementById("status");
 const loginBtn = document.getElementById("loginBtn");
 const clearBtn = document.getElementById("clearBtn");
+const scanBtn = document.getElementById("scanBtn");
+const readerEl = document.getElementById("reader");
 
 const params = new URLSearchParams(window.location.search);
 const rawTrack = params.get("track");
 const rawQuery = params.get("q");
 const code = params.get("code");
+
+let qrScanner = null;
+let isScanning = false;
 
 function setStatus(t){ statusEl.textContent = t; }
 
@@ -52,6 +65,71 @@ function queryFromAnyValue(value) {
   if (value.startsWith("spotify:track:")) return "";
   return value.trim();
 }
+
+function parseScannedText(text) {
+  try {
+    const url = new URL(text);
+    const q = url.searchParams.get("q");
+    const track = url.searchParams.get("track");
+
+    if (track) {
+      if (isSpotifyTrackUri(track)) return { track, query: null };
+      return { track: null, query: queryFromAnyValue(track) };
+    }
+
+    if (q) return { track: null, query: q };
+  } catch (e) {
+    // Kein URL-Format, dann als Suchtext behandeln.
+  }
+
+  if (isSpotifyTrackUri(text)) return { track: text, query: null };
+  return { track: null, query: queryFromAnyValue(text) };
+}
+
+async function startScanner() {
+  if (isScanning) return;
+
+  readerEl.style.display = "block";
+  setStatus("Kamera wird geöffnet…");
+
+  qrScanner = new Html5Qrcode("reader");
+
+  try {
+    await qrScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      async decodedText => {
+        if (!isScanning) return;
+        isScanning = false;
+
+        try {
+          await qrScanner.stop();
+          readerEl.style.display = "none";
+
+          const parsed = parseScannedText(decodedText);
+
+          if (parsed.track) localStorage.setItem("pending_track", parsed.track);
+          if (parsed.query) localStorage.setItem("pending_query", parsed.query);
+
+          setStatus("QR-Code erkannt.");
+          await handlePlayback(parsed.track, parsed.query);
+        } catch (err) {
+          console.error(err);
+          setStatus("Fehler beim Scannen.");
+        }
+      }
+    );
+
+    isScanning = true;
+    setStatus("QR-Code scannen…");
+  } catch (err) {
+    console.error(err);
+    readerEl.style.display = "none";
+    setStatus("Kamera konnte nicht geöffnet werden.");
+  }
+}
+
+scanBtn.onclick = startScanner;
 
 function base64urlencode(buf){
   return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
@@ -201,6 +279,26 @@ async function playTrack(accessToken, trackUri){
   throw new Error(await res.text());
 }
 
+async function handlePlayback(track, query) {
+  let token = await getAccessToken();
+
+  if (!token) {
+    setStatus("Mit Spotify verbinden.");
+    loginBtn.hidden = false;
+    loginBtn.onclick = login;
+    return;
+  }
+
+  if (!track && query) track = await resolveTrack(token, query);
+
+  if (!track) {
+    setStatus("Kein Lied gefunden.");
+    return;
+  }
+
+  await playTrack(token, track);
+}
+
 async function init(){
   if (CLIENT_ID === "DEINE_SPOTIFY_CLIENT_ID_HIER") {
     setStatus("Bitte CLIENT_ID eintragen.");
@@ -243,20 +341,11 @@ async function init(){
   }
 
   if (!track && !query) {
-    setStatus("Kein Lied gefunden.");
+    setStatus("Bereit.");
     return;
   }
 
-  if (!token) {
-    setStatus("Mit Spotify verbinden.");
-    loginBtn.hidden = false;
-    loginBtn.onclick = login;
-    return;
-  }
-
-  if (!track) track = await resolveTrack(token, query);
-
-  await playTrack(token, track);
+  await handlePlayback(track, query);
 }
 
 init().catch(e => {
