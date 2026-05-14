@@ -1,18 +1,9 @@
-# HITSTER ESC App v5
+HITSTER ESC App v6
 
-Neu:
-- Button „Neues Lied scannen“
-- Öffnet die Kamera im Browser
-- Erkennt QR-Codes direkt in der App
-- Zeigt weiterhin keine Songnamen oder Interpreten an
+Verbesserung:
+- Präzise Spotify-Suche mit:
+  track:"SONG" artist:"ARTIST"
 
-Wichtig:
-- Funktioniert nur über HTTPS, also z. B. GitHub Pages.
-- Auf iPhone/Android muss Kamerazugriff erlaubt werden.
-- Spotify Premium und ein aktives Spotify-Gerät sind weiterhin nötig.
-
-Deployment:
-1. CLIENT_ID in index.html eintragen.
-2. index.html in deinem GitHub-Pages-Repo ersetzen.
-3. Seite am Handy neu laden.
-4. Bei Problemen Cache löschen.
+Dadurch werden falsche Treffer wie beim ESC 2025 Song von Österreich deutlich reduziert.
+Die bestehenden QR-Codes funktionieren weiterhin.
+Nur die App muss ersetzt werden.
