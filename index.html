@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ESC HITSTER Spotify Player</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; background:#111; color:#fff; display:grid; min-height:100vh; place-items:center; }
+    main { max-width: 560px; padding: 32px; text-align:center; }
+    button { font-size: 18px; border:0; border-radius:999px; padding:14px 24px; background:#1DB954; color:#111; font-weight:800; cursor:pointer; }
+    code { background:#222; padding:2px 6px; border-radius:6px; }
+    .small { opacity:.75; font-size:14px; line-height:1.5; }
+    .status { margin: 20px 0; font-size: 18px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ESC HITSTER Player</h1>
+  <p class="status" id="status">Bereit.</p>
+  <button id="loginBtn" hidden>Mit Spotify verbinden</button>
+  <p class="small">
+    QR-Link-Format:<br>
+    <code>https://deine-domain.example/?track=spotify:track:TRACK_ID</code>
+  </p>
+</main>
+
+<script>
+/**
+ * 1) Spotify Developer Dashboard öffnen
+ * 2) App erstellen
+ * 3) Redirect URI exakt auf deine gehostete URL setzen, z.B.
+ *    https://deine-domain.example/
+ * 4) CLIENT_ID hier eintragen
+ */
+const CLIENT_ID = "DEINE_SPOTIFY_CLIENT_ID_HIER";
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+const SCOPES = [
+  "user-modify-playback-state",
+  "user-read-playback-state"
+].join(" ");
+
+const statusEl = document.getElementById("status");
+const loginBtn = document.getElementById("loginBtn");
+
+const params = new URLSearchParams(window.location.search);
+const trackParam = params.get("track");
+const code = params.get("code");
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function base64urlencode(arrayBuffer) {
+  return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256(plain) {
+  const data = new TextEncoder().encode(plain);
+  return crypto.subtle.digest("SHA-256", data);
+}
+
+function randomString(length = 64) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return [...values].map(v => chars[v % chars.length]).join("");
+}
+
+async function login() {
+  if (!trackParam) {
+    setStatus("Kein Track im QR-Link gefunden.");
+    return;
+  }
+
+  const verifier = randomString();
+  localStorage.setItem("spotify_pkce_verifier", verifier);
+  localStorage.setItem("pending_track", trackParam);
+
+  const challenge = base64urlencode(await sha256(verifier));
+
+  const authUrl = new URL("https://accounts.spotify.com/authorize");
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("client_id", CLIENT_ID);
+  authUrl.searchParams.set("scope", SCOPES);
+  authUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+  authUrl.searchParams.set("code_challenge", challenge);
+
+  window.location.href = authUrl.toString();
+}
+
+async function getTokenFromCode(authCode) {
+  const verifier = localStorage.getItem("spotify_pkce_verifier");
+
+  const body = new URLSearchParams();
+  body.set("client_id", CLIENT_ID);
+  body.set("grant_type", "authorization_code");
+  body.set("code", authCode);
+  body.set("redirect_uri", REDIRECT_URI);
+  body.set("code_verifier", verifier);
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+  const token = await res.json();
+
+  localStorage.setItem("spotify_access_token", token.access_token);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + token.expires_in * 1000));
+  if (token.refresh_token) localStorage.setItem("spotify_refresh_token", token.refresh_token);
+
+  return token.access_token;
+}
+
+async function getAccessToken() {
+  const token = localStorage.getItem("spotify_access_token");
+  const expiresAt = Number(localStorage.getItem("spotify_token_expires_at") || 0);
+
+  if (token && Date.now() < expiresAt - 60000) return token;
+
+  const refresh = localStorage.getItem("spotify_refresh_token");
+  if (!refresh) return null;
+
+  const body = new URLSearchParams();
+  body.set("client_id", CLIENT_ID);
+  body.set("grant_type", "refresh_token");
+  body.set("refresh_token", refresh);
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+
+  if (!res.ok) return null;
+  const tokenData = await res.json();
+
+  localStorage.setItem("spotify_access_token", tokenData.access_token);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + tokenData.expires_in * 1000));
+  if (tokenData.refresh_token) localStorage.setItem("spotify_refresh_token", tokenData.refresh_token);
+
+  return tokenData.access_token;
+}
+
+async function playTrack(accessToken, trackUri) {
+  setStatus("Starte Wiedergabe…");
+
+  const res = await fetch("https://api.spotify.com/v1/me/player/play", {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ uris: [trackUri] })
+  });
+
+  if (res.status === 204) {
+    setStatus("Lied gestartet 🎵");
+    return;
+  }
+
+  if (res.status === 404) {
+    setStatus("Kein aktives Spotify-Gerät gefunden. Öffne Spotify auf Handy/Computer und scanne erneut.");
+    return;
+  }
+
+  if (res.status === 403) {
+    setStatus("Spotify Premium wird benötigt oder Playback wurde verweigert.");
+    return;
+  }
+
+  const txt = await res.text();
+  setStatus("Fehler beim Starten: " + txt);
+}
+
+async function init() {
+  if (CLIENT_ID === "DEINE_SPOTIFY_CLIENT_ID_HIER") {
+    setStatus("Bitte zuerst CLIENT_ID in index.html eintragen.");
+    return;
+  }
+
+  try {
+    let token = await getAccessToken();
+
+    if (code) {
+      token = await getTokenFromCode(code);
+      const pendingTrack = localStorage.getItem("pending_track");
+      window.history.replaceState({}, document.title, REDIRECT_URI + (pendingTrack ? `?track=${encodeURIComponent(pendingTrack)}` : ""));
+    }
+
+    const track = trackParam || localStorage.getItem("pending_track");
+
+    if (!track) {
+      setStatus("Kein Track angegeben.");
+      return;
+    }
+
+    if (!token) {
+      setStatus("Einmal mit Spotify verbinden.");
+      loginBtn.hidden = false;
+      loginBtn.onclick = login;
+      return;
+    }
+
+    await playTrack(token, track);
+  } catch (err) {
+    console.error(err);
+    setStatus("Fehler: " + err.message);
+    loginBtn.hidden = false;
+    loginBtn.onclick = login;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
